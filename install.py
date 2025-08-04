@@ -245,7 +245,7 @@ install_requires = [
     'webdriver_manager',
 
     #test
-    'numpy==2.5.0',
+    'numpy==2.3.0',
 ]
 
 if flag_install_SAM:
