@@ -1,4 +1,5 @@
 from source.tools.Tool import Tool
+from PyQt5.QtCore import Qt
 
 class EditBorder(Tool):
     def __init__(self, viewerplus, edit_points):
@@ -13,8 +14,9 @@ class EditBorder(Tool):
         self.tool_message = f'<div style="text-align: left;">{message}</div>'
 
     def leftPressed(self, x, y, mods):
-        if self.edit_points.startDrawing(x, y):
-            self.log.emit("[TOOL][EDITBORDER] DRAWING starts..")
+        if mods == Qt.ShiftModifier:
+            if self.edit_points.startDrawing(x, y):
+                self.log.emit("[TOOL][EDITBORDER] DRAWING starts..")
 
     def mouseMove(self, x, y, mods=None):
         self.edit_points.move(x, y)

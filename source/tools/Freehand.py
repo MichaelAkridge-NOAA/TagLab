@@ -1,6 +1,8 @@
 from source.tools.Tool import Tool
 from source.Blob import Blob
 
+from PyQt5.QtCore import Qt
+
 class Freehand(Tool):
     def __init__(self, viewerplus, edit_points):
         super(Freehand, self).__init__(viewerplus)
@@ -14,8 +16,9 @@ class Freehand(Tool):
         self.tool_message = f'<div style="text-align: left;">{message}</div>'
 
     def leftPressed(self, x, y, mods):
-        if self.edit_points.startDrawing(x, y):
-            self.log.emit("[TOOL][FREEHAND] DRAWING starts..")
+        if mods == Qt.ShiftModifier:
+            if self.edit_points.startDrawing(x, y):
+                self.log.emit("[TOOL][FREEHAND] DRAWING starts..")
 
     def mouseMove(self, x, y, mods=None):
         self.edit_points.move(x, y)

@@ -65,7 +65,7 @@ class Watershed(Tool):
         if mods &  Qt.ShiftModifier:
             self.scribbles.move(x, y)
 
-    def wheel(self, delta):
+    def wheel(self, delta, mods=None):
         increase = float(delta.y()) / 10.0
         if 0.0 < increase < 1.0:
             increase = 1
@@ -262,8 +262,22 @@ class Watershed(Tool):
         
         for blob in blobs:
             if blob.class_name != "Dummy":
-                self.snapBlobBorders(blob)
-                self.viewerplus.addBlob(blob)
+                try:
+                    self.snapBlobBorders(blob)
+                    self.viewerplus.addBlob(blob)
+                except Exception as e:
+                    if "Empty contour" in str(e):
+                        print(f"Empty contour exception")
+                        segmented = self.viewerplus.annotations.seg_blobs
+                        # for seg in self.viewerplus.annotations.seg_blobs:
+                        for seg in segmented:
+                            if checkIntersection(blob.bbox, seg.bbox):
+                                # print(seg.id)
+                                self.viewerplus.annotations.subtract(seg, blob)
+                        self.viewerplus.addBlob(blob)   
+                    else:
+                        print(f"Exception: {e}")
+                        
             
         self.viewerplus.resetTools()
 

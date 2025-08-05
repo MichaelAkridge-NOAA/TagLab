@@ -33,7 +33,10 @@ from PyQt5.QtCore import Qt, QSize, QMargins, QDir, QPoint, QPointF, QRectF, QTi
 from PyQt5.QtGui import QFontDatabase, QFont, QPixmap, QIcon, QKeySequence, QPen, QImageReader, QImage
 from PyQt5.QtWidgets import QApplication, QWidget, QMainWindow, QFileDialog, QComboBox, QMenuBar, QMenu, QSizePolicy, QScrollArea, \
     QLabel, QToolButton, QPushButton, QSlider, QCheckBox, \
-    QMessageBox, QGroupBox, QLayout, QHBoxLayout, QVBoxLayout, QFrame, QDockWidget, QTextEdit, QAction
+    QMessageBox, QGroupBox, QLayout, QHBoxLayout, QVBoxLayout, QFrame, QDockWidget, QTextEdit, QAction, \
+    QDialog
+
+from source.QtExportDXF import QtDXFExportOptions  # Import the options dialog
 
 
 
@@ -87,6 +90,9 @@ from source.QtGridWidget import QtGridWidget
 from source.QtDictionaryWidget import QtDictionaryWidget
 from source.QtRegionAttributesWidget import QtRegionAttributesWidget
 from source.QtShapefileAttributeWidget import QtAttributeWidget
+from source.QtGeometricInfoWidget import QtGeometricInfoWidget
+
+from source.QtSelection import QtSelectByPropertiesWidget
 
 # from source.QtDXFfileAttributeWidget import QtDXFExportWidget
 import ezdxf
@@ -157,7 +163,10 @@ class TagLab(QMainWindow):
 
         current_version, need_to_update = self.checkNewVersion()
         if need_to_update:
-            print("This is a new version available! Please, launch update.py and then install.py (for the version of 29th October 2024 only).")
+            print("--- THERE IS A NEW VERSION AVAILABLE! ---")
+            print("Please, launch update.py")
+            print("if updating from the 29/10/2024 version, also launch install.py")
+            print("-----------------------------------------")            
             sys.exit(0)
 
         ##### DATA INITIALIZATION AND SETUP #####
@@ -243,6 +252,7 @@ class TagLab(QMainWindow):
         self.btnSam                = self.newButton("sam.png", "SAM - all instances in an area", flatbuttonstyle, self.sam)
         self.btnFourClicks         = self.newButton("dexter.png",   "4-clicks segmentation",  flatbuttonstyle, self.fourClicks)
         self.btnRitm               = self.newButton("ritm.png",     "Positive/negative clicks segmentation", flatbuttonstyle, self.ritm)
+        self.btnRows               = self.newButton("brick.png",     "Rows analysis",      flatbuttonstyle, self.rows)
 
         self.btnAssign             = self.newButton("bucket.png",   "Assign class to region",   flatbuttonstyle, self.assign)
         self.btnEditBorder         = self.newButton("edit.png",     "Edit region border",       flatbuttonstyle, self.editBorder)
@@ -290,6 +300,7 @@ class TagLab(QMainWindow):
         #layout_tools.addWidget(self.btnBricksSegmentation)
         layout_tools.addWidget(self.btnSam)
         layout_tools.addWidget(self.btnSamInteractive)
+        layout_tools.addWidget(self.btnRows)
         layout_tools.addWidget(labelSeparator1) #separator-----------------------------------        
         layout_tools.addWidget(self.btnAssign)        
         layout_tools.addWidget(self.btnEditBorder)
@@ -328,7 +339,15 @@ class TagLab(QMainWindow):
         self.attachBoundariesAction = self.newAction("Snap Borders",          "B",   self.attachBoundaries)
         self.fillAction         = self.newAction("Fill Region",               "F",   self.fillLabel)
         self.createNegative = self.newAction("Create a Background Region using the WA", "N", self.createNegative)
+        self.computeGeometricInfo = self.newAction("Compute Geometric Info", None, self.computeGeometricInfo)
 
+        # SELECTION ACTIONS
+        self.selectAllAction           = self.newAction("Select All",                "Ctrl+A", self.selectAll)
+        self.selectNoneAction          = self.newAction("Select None",               "Ctrl+D", self.selectNone)
+        self.selectInvertAction        = self.newAction("Invert Selection",          "Ctrl+I", self.selectInvert)
+        self.selectByClassAction       = self.newAction("Select by Class",           "",       self.selectByClass)
+        self.selectByWorkingAreaAction = self.newAction("Select by Working Area",    "",       self.selectByWorkingArea)
+        self.selectByPropertiesAction  = self.newAction("Select by Properties",     "",       self.selectByProperties)
 
         # VIEWERPLUS
 
@@ -560,8 +579,14 @@ class TagLab(QMainWindow):
         layout_groupbox2.setContentsMargins(QMargins(0, 0, 0, 0))
         self.groupbox_comparison.setLayout(layout_groupbox2)
 
-        # BLOB INFO
+        # # BLOB INFO
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        
         self.groupbox_blobpanel = QtPanelInfo(self.project.region_attributes, self.project.labels)
+
+        self.scroll_area.setWidget(self.groupbox_blobpanel)
+
         self.blob_with_info_displayed = None
 
         # MAP VIEWER
@@ -600,8 +625,10 @@ class TagLab(QMainWindow):
         self.groupbox_comparison.setStyleSheet("padding: 0px")
 
         self.blobdock = QDockWidget("Info and Attributes", self)
-        self.groupbox_blobpanel.setMinimumWidth(panels_size)
-        self.blobdock.setWidget(self.groupbox_blobpanel)
+        # self.groupbox_blobpanel.setMinimumWidth(panels_size)
+        self.scroll_area.setMinimumWidth(panels_size)
+        # self.blobdock.setWidget(self.groupbox_blobpanel)
+        self.blobdock.setWidget(self.scroll_area)
 
         self.mapdock = QDockWidget("Map Preview", self)
         self.mapviewer.preferred = panels_size
@@ -636,6 +663,7 @@ class TagLab(QMainWindow):
         self.submenuWorkingArea = None
         self.submenuExport = None
         self.submenuImport = None
+        self.selectmenu = None
         self.regionmenu = None
         self.comparemenu = None
         self.demmenu = None
@@ -726,6 +754,7 @@ class TagLab(QMainWindow):
         :param show: If True, buttons will be shown; if False, buttons will be hidden
         """
         self.btnWatershed.setVisible(show)
+        self.btnRows.setVisible(show)
 
         self.importViscorePointsAct.setVisible(not show)
         self.importCoralNetPointsAct.setVisible(not show)
@@ -1177,6 +1206,18 @@ class TagLab(QMainWindow):
         self.projectmenu.addSeparator()
         self.projectmenu.addAction(regionAttributesAct)
 
+        ###### SELECT MENU
+        self.selectmenu = menubar.addMenu("&Select")
+        self.selectmenu.setStyleSheet(styleMenu)
+        self.selectmenu.addAction(self.selectAllAction)
+        self.selectmenu.addAction(self.selectNoneAction)
+        self.selectmenu.addAction(self.selectInvertAction)
+        self.selectmenu.addSeparator()
+        self.selectmenu.addAction(self.selectByClassAction)
+        self.selectmenu.addAction(self.selectByWorkingAreaAction)
+        self.selectmenu.addAction(self.selectByPropertiesAction)
+        self.selectmenu.addSeparator()
+
         ###### REGIONS MENU
 
         self.regionmenu = menubar.addMenu("&Regions")
@@ -1199,7 +1240,7 @@ class TagLab(QMainWindow):
         self.regionmenu.addAction(self.erodeAction)
         self.regionmenu.addSeparator()
         self.regionmenu.addAction(self.createNegative)
-
+        self.regionmenu.addAction(self.computeGeometricInfo)
 
         ###### POINT ANNOTATIONS MENU
 
@@ -1744,9 +1785,9 @@ class TagLab(QMainWindow):
         if modifiers == Qt.ControlModifier:
             msg = "[KEYPRESS] Key CTRL + '" + key_pressed + "' has been pressed."
         elif modifiers == Qt.ShiftModifier:
-            msg = "[KEYPRESS] Key ALT + '" + key_pressed + "' has been pressed."
-        elif modifiers == Qt.AltModifier:
             msg = "[KEYPRESS] Key SHIFT + '" + key_pressed + "' has been pressed."
+        elif modifiers == Qt.AltModifier:
+            msg = "[KEYPRESS] Key ALT + '" + key_pressed + "' has been pressed."
         else:
             msg = "[KEYPRESS] Key '" + key_pressed + "' has been pressed."
 
@@ -2576,6 +2617,7 @@ class TagLab(QMainWindow):
         self.btnFreehand.setChecked(False)
         self.btnWatershed.setChecked(False)
         self.btnBricksSegmentation.setChecked(False)
+        self.btnRows.setChecked(False)
         self.btnRuler.setChecked(False)
         self.btnCreateCrack.setChecked(False)
         self.btnFourClicks.setChecked(False)
@@ -2605,6 +2647,7 @@ class TagLab(QMainWindow):
             "FREEHAND"     : ["Freehand"     , self.btnFreehand],
             "WATERSHED"    : ["Watershed"    , self.btnWatershed],
             # "BRICKS"       : ["Bricks",        self.btnBricksSegmentation],
+            "ROWS"         : ["Rows"         , self.btnRows],
             "RULER"        : ["Ruler"        , self.btnRuler],
             "FOURCLICKS"   : ["4-click"      , self.btnFourClicks],
             "MATCH"        : ["Match"        , self.btnMatch],
@@ -2690,6 +2733,13 @@ class TagLab(QMainWindow):
         Activate the tool to segment single bricks element.
         """
         self.setTool("BRICKS")
+
+    @pyqtSlot()
+    def rows(self):
+        """
+        Activate the "rows" tool.
+        """
+        self.setTool("ROWS")
 
     @pyqtSlot()
     def ruler(self):
@@ -2861,6 +2911,79 @@ class TagLab(QMainWindow):
             self.activeviewer.deleteSelectedBlobs()
             logfile.info("[OP-DELETE] Selected blobs has been DELETED")
 
+    #SELECTION
+    def selectAll(self):
+        """
+        Select all blobs in the active viewer.
+        """
+        view = self.activeviewer
+        if view is None:
+            return
+        view.selectAllBlobs()
+        logfile.info("[OP-SELECT] All blobs have been selected.")
+
+    def selectNone(self):
+        """
+        Deselect all blobs in the active viewer.
+        """
+        view = self.activeviewer
+        if view is None:
+            return
+        view.selectNoneBlobs()
+        logfile.info("[OP-SELECT] All blobs have been deselected.")
+
+    def selectInvert(self):
+        """
+        Invert the selection of blobs in the active viewer.
+        """
+        view = self.activeviewer
+        if view is None:
+            return
+        view.selectInverseBlobs()
+        logfile.info("[OP-SELECT] Selection has been inverted.")
+
+    def selectByClass(self):
+        """
+        Select blobs by class.
+        """
+        view = self.activeviewer
+        if view is None:
+            return
+        label_name = self.labels_widget.getActiveLabelName()
+        if label_name is None:
+            return
+        view.selectByClass(label_name)
+        logfile.info("[OP-SELECT] Blobs of class '" + label_name + "' have been selected.")
+
+    def selectByWorkingArea(self):
+        """
+        Select blobs by working area.
+        """
+        view = self.activeviewer
+        if view is None:
+            return
+        wa = self.project.working_area
+        if wa is None:
+            return
+        view.selectByWorkingArea(wa)
+        logfile.info("[OP-SELECT] Blobs in the working area have been selected.")
+
+    def selectByProperties(self):
+        """
+        Select blobs by properties.
+        """
+        view = self.activeviewer
+        if view is None:
+            return
+        if self.project is None or len(self.project.images) == 0:
+            return
+        
+        if not hasattr(self, "selectByProperties_widget"):  # in this way there is only one instance of the widget, that preserve the last values used
+            self.selectByProperties_widget = QtSelectByPropertiesWidget(view, parent=self)
+        self.selectByProperties_widget.setWindowModality(Qt.NonModal)
+        self.selectByProperties_widget.show()
+        logfile.info("[OP-SELECT] Blobs have been selected by properties.")
+
     #OPERATIONS
 
     def assignOperation(self):
@@ -2889,6 +3012,19 @@ class TagLab(QMainWindow):
             message = "[OP-MERGE] MERGE OVERLAPPED LABELS operation begins.. (number of selected blobs: " + str(len(view.selected_blobs)) + ")"
             logfile.info(message)
 
+            ref_dict = view.selected_blobs[0].data.copy()
+            flag_different_attributes = False
+            for blob in view.selected_blobs:
+                if blob.data != ref_dict:
+                    flag_different_attributes = True
+
+            if flag_different_attributes:
+                msgBox = QMessageBox()
+                msgBox.setWindowTitle(self.TAGLAB_VERSION)
+                msgBox.setText("The regions you are merging have different custom attributes. The resulting region will have empty fields.")
+                msgBox.exec()
+                ref_dict = {}
+
             #union returns a NEW blob
             union_blob = view.annotations.union(view.selected_blobs)
 
@@ -2902,6 +3038,7 @@ class TagLab(QMainWindow):
                     view.removeBlob(blob)
                     self.logBlobInfo(blob, "[OP-MERGE][BLOB-REMOVED]")
 
+                union_blob.data = ref_dict
                 view.addBlob(union_blob, selected=True)
                 view.saveUndo()
 
@@ -3030,6 +3167,26 @@ class TagLab(QMainWindow):
                 self.logBlobInfo(blob, "[OP-CREATENEGATIVE][BLOB-ADDED]")
                 view.addBlob(blob, selected=True)
 
+    def computeGeometricInfo(self):
+        """
+        Compute geometric information of the selected blobs.
+        """
+        view = self.activeviewer
+        #wa = self.project.working_area
+
+        if view is None:
+            return
+        
+        if len(view.selected_blobs) == 0:
+            msgBox = QMessageBox()
+            msgBox.setWindowTitle(self.TAGLAB_VERSION)
+            msgBox.setText("You need to select at least one region for this operation.")
+            msgBox.exec()
+            return
+
+        geometricInfo_widget = QtGeometricInfoWidget(view, parent = self)
+        geometricInfo_widget.setWindowModality(Qt.ApplicationModal)
+        geometricInfo_widget.show()
 
     def dilate(self):
         """
@@ -3295,6 +3452,10 @@ class TagLab(QMainWindow):
                     view.tools.edit_points.last_editborder_points = None
 
                 created_blobs = view.annotations.refineBorder(bbox, blob, img, depth, mask, view.refine_grow, view.tools.edit_points.last_editborder_points)
+
+                # copy attributes
+                for created_blob in created_blobs:
+                    created_blob.data = blob.data.copy()
 
                 if len(created_blobs) == 0:
                     pass
@@ -3919,7 +4080,7 @@ class TagLab(QMainWindow):
     def updateToolStatus(self):
 
         for button in [self.btnMove, self.btnPoint, self.btnAssign, self.btnEditBorder, self.btnCut, self.btnFreehand,
-                       self.btnCreateCrack, self.btnWatershed, self.btnBricksSegmentation, self.btnRuler, self.btnFourClicks,
+                       self.btnCreateCrack, self.btnWatershed, self.btnBricksSegmentation, self.btnRows, self.btnRuler, self.btnFourClicks,
                        self.btnRitm,self.btnSam, self.btnAutoClassification, self.btnCreateGrid, self.btnGrid]:
             button.setEnabled(len(self.project.images) > 0)
 
@@ -4730,126 +4891,202 @@ class TagLab(QMainWindow):
             return
 
         if self.activeviewer.image is not None:
-            # Open a file dialog to select the output file
-            filters = "DXF (*.dxf)"
-            output_filename, _ = QFileDialog.getSaveFileName(self, "Save DXF File As", self.taglab_dir, filters)
+            # Show the DXF export options dialog
+            options_dialog = QtDXFExportOptions(self)
+            if hasattr(self.activeviewer.image, 'georef_filename') and self.activeviewer.image.georef_filename:
+                options_dialog.enable_georeferencing(True)
+            if options_dialog.exec_() == QDialog.Accepted:
+            # options_dialog.exec_()
 
-            if output_filename:
-                
-                # Create a new DXF document
-                doc = ezdxf.new()
-                msp = doc.modelspace()
+                # Retrieve the selected options
+                export_all_blobs = options_dialog.blobs_group.checkedButton().text() == "All Regions"
+                use_georef = options_dialog.georef_checkbox.isChecked()
+                export_grid = options_dialog.grid_checkbox.isChecked()
+                use_full_name = options_dialog.class_name_group.checkedButton().text() == "Full Label Names"
+                shortened_length = options_dialog.shortened_length_spinbox.value()
 
-                try:
-                    # Check if georeferencing information is available and ask the user if wants to use it
-                    georef = None
-                    text_height_scale = 1.0
-                    if hasattr(self.activeviewer.image, 'georef_filename') and self.activeviewer.image.georef_filename:
-                        reply = QMessageBox.question(self, "Georeference Information",
-                                                     "Georeference information is available. Do you want to use it?",
-                                                     QMessageBox.Yes | QMessageBox.No)
-                        if reply == QMessageBox.Yes:
+                # Open a file dialog to select the output file
+                filters = "DXF (*.dxf)"
+                output_filename, _ = QFileDialog.getSaveFileName(self, "Save DXF File As", self.taglab_dir, filters)
+                if not output_filename.endswith(".dxf"):
+                    output_filename = output_filename + ".dxf"
+                print(output_filename)
+
+                if output_filename:
+                    # Create a new DXF document
+                    doc = ezdxf.new()
+                    msp = doc.modelspace()
+
+                    try:
+                        # Check if georeferencing information is available and process accordingly
+                        georef = None
+                        text_height_scale = 1.0
+                        if use_georef and hasattr(self.activeviewer.image, 'georef_filename') and self.activeviewer.image.georef_filename:
                             georef, transform = rasterops.load_georef(self.activeviewer.image.georef_filename)
                             text_height_scale = max(abs(transform.a), abs(transform.e))
 
-                    if self.project.working_area is None:
-                        # Get blobs from the activeviewer
-                        blobs = self.activeviewer.annotations.seg_blobs
-                        # Add the outline of the map to layer 0
-                        map_outline = [
-                            (0, 0),
-                            (self.activeviewer.image.width, 0),
-                            (self.activeviewer.image.width, self.activeviewer.image.height),
-                            (0, self.activeviewer.image.height),
-                            (0, 0)
-                        ]
-                    else:
-                        # Get blobs inside the working area
-                        blobs = self.activeviewer.annotations.calculate_inner_blobs(self.project.working_area)
-                        # Add the outline of the working area to layer 0
-                        map_outline = [
-                            (self.project.working_area[1], self.project.working_area[0]),
-                            (self.project.working_area[1] + self.project.working_area[2], self.project.working_area[0]),
-                            (self.project.working_area[1] + self.project.working_area[2], self.project.working_area[0] + self.project.working_area[3]),
-                            (self.project.working_area[1], self.project.working_area[0] + self.project.working_area[3]),
-                            (self.project.working_area[1], self.project.working_area[0])
-                        ]
-
-                    if georef:
-                        map_outline = [transform * (x, y) for x, y in map_outline]
-                    msp.add_lwpolyline(
-                        map_outline,
-                        close=True,
-                        dxfattribs={'layer': '0'}
-                    )
-                    
-                    # Add points to the DXF file from 'blobs' data
-                    for blob in blobs:
-                        # Set each class as a new layer
-                        layer_name = blob.class_name
-
-                        # Set color for the layer from blob class color
-                        col = self.project.labels[blob.class_name].fill
-
-                        # Convert the color to a DXF True color code
-                        color_code = ezdxf.colors.rgb2int(col)
-
-                        if not doc.layers.has_entry(layer_name):
-                            doc.layers.new(name=layer_name, dxfattribs={'true_color': color_code})
-
-                        # Add the outer contour
-                        if georef:
-                            points = [transform * (x, y) for x, y in blob.contour]
+                        # Determine which blobs to export
+                        if export_all_blobs:
+                            exported_blobs = self.activeviewer.annotations.seg_blobs
                         else:
-                            points = [(x, y) for x, y in blob.contour]
-                        if points:
-                            msp.add_lwpolyline(
-                                points,
-                                close=True,
-                                dxfattribs={'layer': layer_name}
-                            )
+                            exported_blobs = []
+                            for to_export in self.activeviewer.annotations.seg_blobs:
+                                if self.viewerplus.project.isLabelVisible(to_export.class_name):
+                                    exported_blobs.append(to_export)
+                                
 
-                        # Add inner contours (holes)
-                        for inner_contour in blob.inner_contours:
-                            # inner_points = transform_coords([(x, y) for x, y in inner_contour])
+                        # Add the outline of the map or working area
+                        if self.project.working_area is None:
+                            map_outline = [
+                                (0, 0),
+                                (self.activeviewer.image.width, 0),
+                                (self.activeviewer.image.width, self.activeviewer.image.height),
+                                (0, self.activeviewer.image.height),
+                                (0, 0)
+                            ]
+                        else:
+                            map_outline = [
+                                (self.project.working_area[1], self.project.working_area[0]),
+                                (self.project.working_area[1] + self.project.working_area[2], self.project.working_area[0]),
+                                (self.project.working_area[1] + self.project.working_area[2], self.project.working_area[0] + self.project.working_area[3]),
+                                (self.project.working_area[1], self.project.working_area[0] + self.project.working_area[3]),
+                                (self.project.working_area[1], self.project.working_area[0])
+                            ]
+
+                        if georef:
+                            map_outline = [transform * (x, y) for x, y in map_outline]
+
+                        msp.add_lwpolyline(
+                            map_outline,
+                            close=True,
+                            dxfattribs={'layer': '0'}
+                        )
+
+                        # Add blobs and grid (if selected)
+                        for blob in exported_blobs:
+                            # if self.viewerplus.project.isLabelVisible(blob.class_name):
+                            layer_name = blob.class_name
+                            col = self.project.labels[blob.class_name].fill
+                            color_code = ezdxf.colors.rgb2int(col)
+
+                            if not doc.layers.has_entry(layer_name):
+                                doc.layers.new(name=layer_name, dxfattribs={'true_color': color_code})
+
                             if georef:
-                                inner_points = [transform * (x, y) for x, y in inner_contour]
+                                points = [transform * (x, y) for x, y in blob.contour]
                             else:
-                                inner_points = [(x, y) for x, y in inner_contour]
-                            if inner_points:
-                                msp.add_lwpolyline(inner_points, close=True, dxfattribs={'layer': layer_name})
+                                points = [(x, self.activeviewer.image.height - y) for x, y in blob.contour]
 
-                        # Add the class_name as a text annotation at the blob's centroid
-                        if blob.class_name:
-                            x, y = blob.centroid
-                            if georef:
-                                x, y = transform * (x, y)
-                            msp.add_text(
-                                blob.class_name, height=text_height_scale * 22.0,
-                                dxfattribs={
-                                    'layer': layer_name
-                                }
-                            ).set_placement((x, y), align=TextEntityAlignment.MIDDLE_CENTER)
+                            if points:
+                                msp.add_lwpolyline(
+                                    points,
+                                    close=True,
+                                    dxfattribs={'layer': layer_name}
+                                )
 
-                    # Save the DXF file
-                    doc.saveas(output_filename)
+                            for inner_contour in blob.inner_contours:
+                                if georef:
+                                    inner_points = [transform * (x, y) for x, y in inner_contour]
+                                else:
+                                    inner_points = [(x, self.activeviewer.image.height - y) for x, y in inner_contour]
 
-                    # Show a confirmation message box
-                    msgBox = QMessageBox(self)
-                    msgBox.setWindowTitle("Export Successful")
-                    msgBox.setText("DXF file exported successfully!")
-                    msgBox.exec()
-                    return
-                except Exception as e:
-                    msgBox = QMessageBox(self)
-                    msgBox.setWindowTitle("Export Failed")
-                    if "/" in str(e):
-                        print("/ inside a class, please rename the class before continuing")
-                        msgBox.setText("Error exporting DXF file:\nforbidden character (/) inside class names, please rename the classes before continuing")
-                    else:
+                                if inner_points:
+                                    msp.add_lwpolyline(inner_points, close=True, dxfattribs={'layer': layer_name})
+
+                            if blob.class_name and blob.class_name != "Empty":
+                                # class_name = blob.class_name[:5] if len(blob.class_name) > 5 else blob.class_name
+                                if use_full_name:
+                                    class_name = blob.class_name
+                                else:
+                                    class_name = blob.class_name[:shortened_length]
+                                x, y = blob.centroid
+                                if georef:
+                                    x, y = transform * (x, y)
+                                else:
+                                    y = self.activeviewer.image.height - y
+                                msp.add_text(
+                                    class_name, height=text_height_scale * 22.0,
+                                    dxfattribs={'layer': layer_name}
+                                ).set_placement((x, y), align=TextEntityAlignment.MIDDLE_CENTER)
+
+                        if export_grid:                        
+                            if self.activeviewer.image.grid is not None:
+                                print("grid present")
+                                grid = self.activeviewer.image.grid
+                                grid_layer_name = "Grid"
+                                
+                                # Create a new layer for the grid if it doesn't exist
+                                if not doc.layers.has_entry(grid_layer_name):
+                                    doc.layers.new(name=grid_layer_name, dxfattribs={'color': 0})  # Black color for the grid
+                                
+                                # Get grid dimensions
+                                cell_width = grid.width / grid.ncol
+                                cell_height = grid.height / grid.nrow
+
+                                # Iterate through the grid cells
+                                for r in range(grid.nrow):
+                                    for c in range(grid.ncol):
+                                        value = grid.cell_values[r, c]
+                                        if value > 0:  # Only draw cells with a state > 0
+                                            x1 = grid.offx + c * cell_width
+                                            y1 = grid.offy + r * cell_height
+                                            x2 = x1 + cell_width
+                                            y2 = y1 + cell_height
+
+                                            if georef:
+                                                # Transform the coordinates if georeferenced
+                                                p1 = transform * (x1, y1)
+                                                p2 = transform * (x2, y1)
+                                                p3 = transform * (x2, y2)
+                                                p4 = transform * (x1, y2)
+                                            else:
+                                                # Invert Y-axis if not georeferenced
+                                                height = self.activeviewer.image.height
+                                                p1 = (x1, height - y1)
+                                                p2 = (x2, height - y1)
+                                                p3 = (x2, height - y2)
+                                                p4 = (x1, height - y2)
+
+                                            # Add the cell as a polyline
+                                            msp.add_lwpolyline(
+                                                [p1, p2, p3, p4, p1],  # Close the polyline
+                                                close=True,
+                                                dxfattribs={'layer': grid_layer_name}
+                                            )
+
+                                # Add notes to the DXF file
+                                for note in grid.notes:
+                                    x, y, text = note["x"], note["y"], note["txt"]
+                                    if georef:
+                                        x, y = transform * (x, y)
+                                    else:
+                                        y = self.activeviewer.image.height - y
+                                    msp.add_text(
+                                        text, height=10.0,  # Adjust text height as needed
+                                        dxfattribs={'layer': grid_layer_name}
+                                    ).set_placement((x, y), align=TextEntityAlignment.MIDDLE_CENTER)
+                                
+                            else:
+                                print("grid NOT present")
+
+
+                        # Save the DXF file
+                        doc.saveas(output_filename)
+
+                        # Show a confirmation message box
+                        msgBox = QMessageBox(self)
+                        msgBox.setWindowTitle("Export Successful")
+                        msgBox.setText("DXF file exported successfully!")
+                        msgBox.exec()
+                        return
+                    except Exception as e:
+                        msgBox = QMessageBox(self)
+                        msgBox.setWindowTitle("Export Failed")
                         msgBox.setText("Error exporting DXF file: " + str(e))
-                    msgBox.exec()
-                    return
+                        msgBox.exec()
+                        return
+            else:
+                return
 
     @pyqtSlot()
     def exportGeoRefLabelMap(self):

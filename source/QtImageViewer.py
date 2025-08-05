@@ -229,7 +229,8 @@ class QtImageViewer(QGraphicsView):
 
     @pyqtSlot(float, float)
     def center(self, x, y):
-
+        if self.img_map is None:
+            return
         zf = self.zoom_factor
 
         # NOTE: self.img_map is None if image is not loaded

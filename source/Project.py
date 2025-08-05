@@ -1,5 +1,6 @@
 import datetime
 import json
+import csv
 import os
 
 import numpy as np
@@ -23,7 +24,7 @@ from source.RegionAttributes import RegionAttributes
 from source.Shape import Layer, Shape
 from source.tools import Cut
 
-def replacePaths(old_path, new_path, images, current_dir):
+def replacePaths(old_path, new_path, images, taglab_dir):
     """
     Replace the old_path with the new_path in the project images. The new paths are assigned
     if and only if the corresponding files exist (otherwise this means that are not moved).
@@ -34,16 +35,16 @@ def replacePaths(old_path, new_path, images, current_dir):
         for channel in image.channels:
 
             path = os.path.abspath(os.path.dirname(channel.filename))
-            if os.path.samefile(old_path, path):
+            if os.path.normpath(old_path) == os.path.normpath(path):
                 filename = os.path.join(new_path, os.path.basename(channel.filename))
                 if os.path.exists(filename):
-                    channel.filename = current_dir.relativeFilePath(filename)
+                    channel.filename = taglab_dir.relativeFilePath(filename)
 
         path = os.path.abspath(os.path.dirname(image.georef_filename))
-        if os.path.samefile(old_path, path):
+        if os.path.normpath(old_path) == os.path.normpath(path):
             filename = os.path.join(new_path, os.path.basename(image.georef_filename))
             if os.path.exists(filename):
-                image.georef_filename = current_dir.relativeFilePath(filename)
+                image.georef_filename = taglab_dir.relativeFilePath(filename)
 
 
 def loadProject(taglab_working_dir, filename, default_dict):
@@ -70,21 +71,24 @@ def loadProject(taglab_working_dir, filename, default_dict):
     project.filename = filename
 
     # check if a file exist for each image and each channel
-    dir = QDir(taglab_working_dir)
+    taglab_dir = QDir(taglab_working_dir)
     for image in project.images:
         for channel in image.channels:
             if not os.path.exists(channel.filename) and len(channel.filename) > 4:
 
-                current_dir = os.path.abspath(os.path.dirname(channel.filename))
+                current_abs_path = os.path.abspath(channel.filename)
 
                 (filename, filter) = QFileDialog.getOpenFileName(None,
                                                                  "Couldn't find " + channel.filename + " please select it:",
                                                                  taglab_working_dir,
                                                                  "Image Files (*.png *.jpg *.jpeg *.tif *.tiff)")
 
-                new_dir = os.path.abspath(os.path.dirname(filename))
+                new_abs_path = os.path.abspath(filename)
 
-                replacePaths(current_dir, new_dir, project.images, dir)
+                current_path = os.path.dirname(current_abs_path)  # remove the name of the file
+                new_path = os.path.dirname(new_abs_path)          # remove the name of the file
+
+                replacePaths(current_path, new_path, project.images, taglab_dir)
 
 
     # load geo-reference information
@@ -316,28 +320,84 @@ class Project(QObject):
         f.write(str)
         f.close()
 
+    # def loadDictionary(self, filename):
+    #     """
+    #     It returns True if the dictionary is opened correctly, otherwise it returns False.
+    #     """
+
+    #     try:
+    #         f = open(filename)
+    #         dictionary = json.load(f)
+    #         f.close()
+
+    #         self.dictionary_name = dictionary['Name']
+    #         self.dictionary_description = dictionary['Description']
+    #         labels = dictionary['Labels']
+
+    #         self.labels = {}
+    #         for label in labels:
+    #             id = label['id']
+    #             name = label['name']
+    #             fill = label['fill']
+    #             border = label['border']
+    #             description = label['description']
+    #             self.labels[name] = Label(id=id, name=name, fill=fill, border=border)
+
+    #     except Exception as e:
+    #         QMessageBox.critical(None, "Error", f"Error loading dictionary: {filename}\n{e}")
+    #         return False
+
+    #     return True
+
+
     def loadDictionary(self, filename):
         """
         It returns True if the dictionary is opened correctly, otherwise it returns False.
         """
 
         try:
-            f = open(filename)
-            dictionary = json.load(f)
-            f.close()
+            if filename.endswith('.json'):
+                with open(filename, 'r') as f:
+                    dictionary = json.load(f)
 
-            self.dictionary_name = dictionary['Name']
-            self.dictionary_description = dictionary['Description']
-            labels = dictionary['Labels']
+                self.dictionary_name = dictionary['Name']
+                self.dictionary_description = dictionary['Description']
+                labels = dictionary['Labels']
 
-            self.labels = {}
-            for label in labels:
-                id = label['id']
-                name = label['name']
-                fill = label['fill']
-                border = label['border']
-                description = label['description']
-                self.labels[name] = Label(id=id, name=name, fill=fill, border=border)
+                self.labels = {}
+                for label in labels:
+                    id = label['id']
+                    name = label['name']
+                    fill = label['fill']
+                    border = label['border']
+                    description = label['description']
+                    self.labels[name] = Label(id=id, name=name, fill=fill, border=border)
+
+            elif filename.endswith('.csv'):
+                self.labels = {}
+                with open(filename, 'r') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        id = row['US']  # Assuming 'US' column is used as the id
+                        name = row['US']  # Assuming 'US' column is used as the name
+                        fill = '[\
+                            143,\
+                            89,\
+                            2\
+                            ]'  # Default value for fill
+                        border = '[\
+                            200,\
+                            200,\
+                            200\
+                            ]'   # Default value for border
+                        description = 'null'#row['description']
+                        self.labels[name] = Label(id=id, name=name, fill=fill, border=border, description=description)
+
+                self.dictionary_name = filename
+                self.dictionary_description = "Loaded from CSV file"
+
+            else:
+                raise ValueError("Unsupported file format")
 
         except Exception as e:
             QMessageBox.critical(None, "Error", f"Error loading dictionary: {filename}\n{e}")
@@ -386,11 +446,15 @@ class Project(QObject):
 
 
     def isLabelVisible(self, id):
+
+        if id is None:
+            return
+
         if not id in self.labels:
             print("WARNING! Unknown label: " + id)
 
         lbl = self.labels.get(id)
-        return self.labels[id].visible
+        return lbl.visible
 
     def orderImagesByAcquisitionDate(self):
         """
